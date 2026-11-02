@@ -1,0 +1,31 @@
+name: Nournet passive audit
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  passive-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run audit unit tests (offline)
+        run: python3 -m unittest discover -s nournet_audit -p "test_*.py" -v
+      - name: Run three-request passive audit
+        run: python3 nournet_audit/audit.py https://nour.net.sa --output report.json
+      - name: Upload JSON report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nournet-passive-report
+          path: report.json
+          if-no-files-found: warn
+          retention-days: 7
