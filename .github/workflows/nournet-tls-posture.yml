@@ -1,0 +1,34 @@
+name: Nournet scoped TLS and headers review
+
+on:
+  push:
+    branches:
+      - audit/nournet-tls-config-20261102
+    paths:
+      - ".github/workflows/nournet-tls-posture.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  passive-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Offline security tests
+        run: python3 -m unittest discover -s nournet_audit -p "test_deeper_posture.py" -v
+      - name: Two request HTTPS and TLS check
+        run: python3 nournet_audit/deeper_posture.py
+      - name: Save redacted diagnostic report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nournet-tls-posture
+          path: nournet-tls-posture.json
+          if-no-files-found: warn
+          retention-days: 2
