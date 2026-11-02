@@ -1,27 +1,101 @@
-name: ZAP Nournet Connectivity and Passive Scan
+name: ZAP Active Security Scan
+
 on:
   workflow_dispatch:
+    inputs:
+      target:
+        description: "Target URL (must be authorized)"
+        required: true
+        default: "https://www.nournet.com.sa"
+      fail_on_high:
+        description: "Fail the job if High-risk findings exist"
+        type: boolean
+        default: false
+  schedule:
+    # كل يوم اثنين الساعة 02:00 UTC
+    - cron: "0 2 * * 1"
+
 permissions:
   contents: read
+  issues: write          # لكتابة النتائج كـ Issues
+  pull-requests: read
+
+concurrency:
+  group: zap-scan-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TARGET_URL: ${{ github.event.inputs.target || 'https://www.nournet.com.sa' }}
+
 jobs:
-  passive-scan:
+  active-scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 60
+
     steps:
-      - name: Verify target DNS and HTTP response
-        shell: bash
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Preflight – verify target reachable
         run: |
-          set -euo pipefail
-          echo "Target: https://nour.net.sa/"
-          getent ahosts nour.net.sa | head -3 || true
-          curl --silent --show-error --location --max-redirs 3 --max-time 20 \
-            --output /dev/null --write-out 'HTTP %{http_code}; final host %{url_effective}; TLS verify %{ssl_verify_result}\n' \
-            https://nour.net.sa/
-      - name: Run passive ZAP baseline
-        uses: zaproxy/action-baseline@v0.14.0
+          echo "Target: $TARGET_URL"
+          for i in $(seq 1 5); do
+            if curl -fsS -o /dev/null -w "%{http_code}\n" --max-time 15 "$TARGET_URL"; then
+              echo "Target reachable ✅"
+              exit 0
+            fi
+            echo "Attempt $i failed, retrying…"
+            sleep 5
+          done
+          echo "Target unreachable ❌"; exit 1
+
+      - name: Run ZAP Full Scan
+        id: zap
+        uses: zaproxy/action-full-scan@v0.13.0
         with:
-          target: 'https://nour.net.sa/'
-          cmd_options: '-m 1 -T 5'
-          allow_issue_writing: false
+          target: ${{ env.TARGET_URL }}
+          allow_issue_writing: true
           fail_action: false
-          artifact_name: 'zap-nournet-passive-report'
+          artifact_name: zap-active-report
+          cmd_options: >
+            -a
+            -j
+            -l INFO
+            -z "-config scanner.strength=MEDIUM -config scanner.alertThreshold=Medium"
+
+      - name: Summarize findings
+        if: always()
+        run: |
+          echo "## 🔐 ZAP Scan Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Target:** $TARGET_URL" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+          if [ -f report_json.json ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "| Risk | Count |" >> $GITHUB_STEP_SUMMARY
+            echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
+            for risk in High Medium Low Informational; do
+              cnt=$(jq "[.site[].alerts[] | select(.riskdesc|startswith(\"$risk\"))] | length" report_json.json 2>/dev/null || echo 0)
+              echo "| $risk | $cnt |" >> $GITHUB_STEP_SUMMARY
+            done
+          fi
+
+      - name: Upload HTML/JSON report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-report-${{ github.run_id }}
+          path: |
+            report_html.html
+            report_json.json
+            report_md.md
+          retention-days: 30
+
+      - name: Fail on High findings (optional)
+        if: ${{ inputs.fail_on_high == true }}
+        run: |
+          cnt=$(jq "[.site[].alerts[] | select(.riskdesc|startswith(\"High\"))] | length" report_json.json)
+          echo "High-risk findings: $cnt"
+          if [ "$cnt" -gt 0 ]; then
+            echo "❌ Failing due to High-risk findings."
+            exit 1
+          fi
