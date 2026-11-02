@@ -1,0 +1,36 @@
+name: Nournet bounded evidence check
+
+on:
+  push:
+    branches:
+      - audit/nournet-bounded-deeper-check-20261102
+    paths:
+      - '.github/workflows/nournet-bounded-evidence.yml'
+      - 'nournet_audit/bounded_audit.py'
+      - 'nournet_audit/test_bounded_audit.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Test strict-scope and privacy logic (offline)
+        run: python3 -m unittest discover -s nournet_audit -p test_bounded_audit.py -v
+      - name: Bounded passive HTTP check (5 GET maximum)
+        run: python3 nournet_audit/bounded_audit.py
+      - name: Upload redacted JSON report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nournet-bounded-evidence
+          path: nournet-expanded-report.json
+          if-no-files-found: warn
+          retention-days: 3
