@@ -1,21 +1,27 @@
-name: ZAP Active Security Scan
-
+name: ZAP Nournet Connectivity and Passive Scan
 on:
   workflow_dispatch:
-
 permissions:
   contents: read
-
 jobs:
-  active-scan:
+  passive-scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-
+    timeout-minutes: 20
     steps:
-      - name: Run ZAP Full Scan
-        uses: zaproxy/action-full-scan@v0.13.0
+      - name: Verify target DNS and HTTP response
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Target: https://nour.net.sa/"
+          getent ahosts nour.net.sa | head -3 || true
+          curl --silent --show-error --location --max-redirs 3 --max-time 20 \
+            --output /dev/null --write-out 'HTTP %{http_code}; final host %{url_effective}; TLS verify %{ssl_verify_result}\n' \
+            https://nour.net.sa/
+      - name: Run passive ZAP baseline
+        uses: zaproxy/action-baseline@v0.14.0
         with:
-          target: "https://www.nournet.com.sa"
+          target: 'https://nour.net.sa/'
+          cmd_options: '-m 1 -T 5'
           allow_issue_writing: false
           fail_action: false
-          artifact_name: zap-active-report
+          artifact_name: 'zap-nournet-passive-report'
